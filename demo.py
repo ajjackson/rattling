@@ -266,17 +266,46 @@ def _get_force_constants(atoms: Atoms, fc_file: Path) -> np.ndarray:
     return _generate_sample_fc(atoms, filename=fc_file)
 
 
-def _get_selection(indices: str, mode_index_range: tuple[int, int]) -> list[int]:
+def _get_selection(
+    indices: str,
+    mode_index_range: tuple[int, int] | None,
+    frequency_range: tuple[float, float] | None,
+    modes: PhononModes,
+) -> slice | np.ndarray:
     """Handle user input for mode selection"""
-
-    if not indices and mode_index_range is None:
+    n_inputs = sum(
+        (bool(indices), mode_index_range is not None, frequency_range is not None)
+    )
+    if n_inputs == 0:
         return None
-    if indices and mode_index_range is not None:
-        raise ValueError("Only one of --indices or --slice may be provided")
+    if n_inputs > 1:
+        raise ValueError(
+            "Only one of --indices, --index-range or --frequency-range may be provided"
+        )
     if indices:
         return np.array(indices.split(","), dtype=int)
+    if mode_index_range is not None:
+        return slice(mode_index_range[0], mode_index_range[1] + 1)
 
-    return slice(mode_index_range[0], mode_index_range[1] + 1)
+    # The remaining option is frequency range
+    frequencies = modes.frequencies / ase.units.invcm
+    mask = np.logical_and(
+        frequencies >= min(frequency_range),
+        frequencies < max(frequency_range),
+    )
+    return np.where(mask)
+
+
+def _print_selection_info(
+    modes: PhononModes, selection: np.ndarray | slice | None
+) -> None:
+    if selection is None:
+        return
+
+    selected_frequencies = modes.frequencies[selection]
+
+    print("Selected modes with frequencies (cm⁻¹):")
+    print(selected_frequencies / ase.units.invcm)
 
 
 def main(
@@ -292,14 +321,19 @@ def main(
             help="0-based indices of selected phonon modes, separated by commas (e.g. '0,1,2')"
         ),
     ] = "",
-    mode_index_range: Annotated[Optional[tuple[int, int]], typer.Option()] = None,
+    index_range: Annotated[
+        Optional[tuple[int, int]],
+        typer.Option(help="0-based index range of selected phonon modes (inclusive)"),
+    ] = None,
+    frequency_range: Annotated[
+        Optional[tuple[float, float]],
+        typer.Option(help="Energy range in cm⁻¹ of selected phonon modes"),
+    ] = None,
     output_file: Path = "rattled.extxyz",
 ) -> None:
     atoms = _get_atoms(structure)
     force_constants = _get_force_constants(atoms, fc_file)
     rng = np.random.default_rng(seed=seed)
-
-    selection = _get_selection(indices, mode_index_range)
 
     modes = get_phonon_modes(
         force_constants,
@@ -308,6 +342,9 @@ def main(
         quantum=quantum,
         failfast=True,
     )
+
+    selection = _get_selection(indices, index_range, frequency_range, modes)
+    _print_selection_info(modes, selection)
 
     if output_file.exists():
         remove(output_file)
