@@ -2,8 +2,9 @@
 
 # Take 1, based on ASE phonon rattling implementation
 
+from os import remove
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from asap3 import EMT
 from ase import Atoms
@@ -13,16 +14,33 @@ import ase.units
 import numpy as np
 import typer
 
-def phonon_harmonics(
-    force_constants,
-    masses,
-    temperature_K=None,
+class PhononModes(NamedTuple):
+    """Collection of intermediate phonon data
+
+    At this stage the force constants have been solved to a fixed set of
+    frequencies and eigenvectors.
+
+    Thermally-appropriate amplitudes are assigned; these have not yet been
+    Gaussian-distributed or mass-weighted
+    """
+    frequencies: np.ndarray
+    eigenvectors: np.ndarray
+    amplitudes: np.ndarray
+
+class PhononRattle(NamedTuple):
+    """Collection of atomic displacements and velocities"""
+    displacements: np.ndarray
+    velocities: np.ndarray
+
+def get_phonon_modes(
+    force_constants: np.ndarray,
+    masses: np.ndarray,
+    temperature_K: float = 300.,
     *,
-    rng=np.random.rand,
-    quantum=False,
-    failfast=True,
-):
-    r"""Return displacements and velocities that produce a given temperature.
+    quantum: bool = False,
+    failfast: bool = True,
+) -> PhononModes:
+    r"""Return phonon mode data at a given temperature
 
     Parameters:
 
@@ -35,9 +53,6 @@ def phonon_harmonics(
     temperature_K: float
         Temperature in Kelvin.
 
-    rng: function
-        Random number generator function, e.g., np.random.rand
-
     quantum: bool
         True for Bose-Einstein distribution, False for Maxwell-Boltzmann
         (classical limit)
@@ -48,17 +63,16 @@ def phonon_harmonics(
 
     Returns:
 
-    Displacements, velocities generated from the eigenmodes,
-    (optional: eigenvalues, eigenvectors of dynamical matrix)
+        Eigenvectors, frequencies and thermal amplitudes
 
     Purpose:
 
-    Excite phonon modes to specified temperature.
+        Calculate relevant data for thermal excitation of phonon modes.
 
-    This excites all phonon modes randomly so that each contributes,
-    on average, equally to the given temperature.  Both potential
-    energy and kinetic energy will be consistent with the phononic
-    vibrations characteristic of the specified temperature.
+    The end goal is to excite all phonon modes randomly so that each
+    contributes, on average, equally to the given temperature.  Both potential
+    energy and kinetic energy will be consistent with the phononic vibrations
+    characteristic of the specified temperature.
 
     In other words the system will be equilibrated for an MD run at
     that temperature.
@@ -87,6 +101,11 @@ def phonon_harmonics(
                  a        i
 
     Reference: [West, Estreicher; PRL 96, 22 (2006)]
+
+    The amplitudes produced by this function are sqrt(kT) / w (or the quantum
+    equivalent). These may be combined with the masses, eigenvectors and
+    appropriate (quasi)random distributions to implement the equation above.
+
     """
 
     # Handle the temperature units
@@ -126,16 +145,25 @@ def phonon_harmonics(
     else:
         A_s = np.sqrt(temperature_eV) / w_s
 
+    return PhononModes(w_s, X_acs, A_s)
+
+def calculate_random_displacements(masses: np.ndarray,
+                                   modes: PhononModes,
+                                   rng: Callable[int, np.ndarray]) -> PhononRattle:
+    """Use PhononModes data to compute a random set of displacements and velocities"""
+
+    w_s, X_acs, A_s = modes
+
     # compute the gaussian distribution for the amplitudes
     # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
     # to avoid (highly improbable) NaN.
 
     # Box Muller [en.wikipedia.org/wiki/Box–Muller_transform]:
-    spread = np.sqrt(-2.0 * np.log(1.0 - rng(nw)))
+    spread = np.sqrt(-2.0 * np.log(1.0 - rng(len(w_s))))
 
     # assign amplitudes and phases
-    A_s *= spread
-    phi_s = 2.0 * np.pi * rng(nw)
+    A_s = A_s * spread
+    phi_s = 2.0 * np.pi * rng(len(w_s))
 
     # Assign velocities and displacements
     v_ac = (w_s * A_s * np.cos(phi_s) * X_acs).sum(axis=2)
@@ -144,65 +172,17 @@ def phonon_harmonics(
     d_ac = (A_s * np.sin(phi_s) * X_acs).sum(axis=2)
     d_ac /= np.sqrt(masses)[:, None]
 
-    return d_ac, v_ac
+    return PhononRattle(d_ac, v_ac)
 
 
-def PhononHarmonics(
-    atoms,
-    force_constants,
-    temperature_K=None,
-    *,
-    rng=np.random,
-    quantum=False,
-    plus_minus=False,
-    return_eigensolution=False,
-    failfast=True,
-):
-    r"""Excite phonon modes to specified temperature.
+def get_rattled_atoms(atoms: Atoms, rattle: PhononRattle) -> Atoms:
+    """Get a new Atoms with displacements and velocities from PhononRattle"""
 
-    This will displace atomic positions and set the velocities so as
-    to produce a random, phononically correct state with the requested
-    temperature.
+    new_atoms = atoms.copy()
+    new_atoms.positions = atoms.positions + rattle.displacements
+    new_atoms.set_velocities(rattle.velocities)
 
-    Parameters:
-
-    atoms: ase.atoms.Atoms() object
-        Positions and momenta of this object are perturbed.
-
-    force_constants: ndarray of size 3N x 3N
-        Force constants for the the structure represented by atoms in eV/Å²
-
-    temperature_K: float
-        Temperature in Kelvin.
-
-    rng: Random number generator
-        RandomState or other random number generator, e.g., np.random.rand
-
-    quantum: bool
-        True for Bose-Einstein distribution, False for Maxwell-Boltzmann
-        (classical limit)
-
-    failfast: bool
-        True for sanity checking the phonon spectrum for negative frequencies
-        at Gamma.
-
-    """
-
-    # Receive displacements and velocities from phonon_harmonics()
-    d_ac, v_ac = phonon_harmonics(
-        force_constants=force_constants,
-        masses=atoms.get_masses(),
-        temperature_K=temperature_K,
-        rng=rng.rand,
-        plus_minus=plus_minus,
-        quantum=quantum,
-        failfast=failfast,
-        return_eigensolution=False,
-    )
-
-    # Assign new positions (with displacements) and velocities
-    atoms.positions += d_ac
-    atoms.set_velocities(v_ac)
+    return new_atoms
 
 
 def n_BE(temp, omega):
@@ -261,22 +241,30 @@ def main(structure: Path = "sample.extxyz",
          fc_file: Path = "sample_fc.npy",
          temperature: float = 300.,
          quantum: bool = True,
-         seed: int = 1) -> None:
+         seed: int = 1,
+         frames: int = 10,
+         output_file: Path = "rattled.extxyz") -> None:
     atoms = _get_atoms(structure)
     force_constants = _get_force_constants(atoms, fc_file)
-
     rng = np.random.default_rng(seed=seed)
 
-    print(
-        phonon_harmonics(
-            force_constants,
-            atoms.get_masses(),
-            temperature_K=temperature,
-            rng=rng.random,
-            quantum=quantum,
-            failfast=True,
+    modes = get_phonon_modes(
+        force_constants,
+        atoms.get_masses(),
+        temperature_K=temperature,
+        quantum=quantum,
+        failfast=True,
         )
-    )
+
+    if output_file.exists():
+        remove(output_file)
+
+    for _ in range(frames):
+        phonon_rattle = calculate_random_displacements(atoms.get_masses(), modes, rng=rng.random)
+
+        out_atoms = get_rattled_atoms(atoms, rattle=phonon_rattle)
+        out_atoms.write(output_file, append=True)
+
 
 if __name__ == '__main__':
     typer.run(main)
