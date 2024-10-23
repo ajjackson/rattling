@@ -1,7 +1,5 @@
 """Selective phonon-mode rattling"""
 
-# Take 1, based on ASE phonon rattling implementation
-
 from os import remove
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -14,6 +12,7 @@ import ase.units
 import numpy as np
 import typer
 
+
 class PhononModes(NamedTuple):
     """Collection of intermediate phonon data
 
@@ -23,19 +22,23 @@ class PhononModes(NamedTuple):
     Thermally-appropriate amplitudes are assigned; these have not yet been
     Gaussian-distributed or mass-weighted
     """
+
     frequencies: np.ndarray
     eigenvectors: np.ndarray
     amplitudes: np.ndarray
 
+
 class PhononRattle(NamedTuple):
     """Collection of atomic displacements and velocities"""
+
     displacements: np.ndarray
     velocities: np.ndarray
+
 
 def get_phonon_modes(
     force_constants: np.ndarray,
     masses: np.ndarray,
-    temperature_K: float = 300.,
+    temperature_K: float = 300.0,
     *,
     quantum: bool = False,
     failfast: bool = True,
@@ -112,7 +115,7 @@ def get_phonon_modes(
     temperature_eV = ase.units.kB * temperature_K
 
     # Build dynamical matrix
-    rminv = (masses ** -0.5).repeat(3)
+    rminv = (masses**-0.5).repeat(3)
     dynamical_matrix = force_constants * rminv[:, None] * rminv[None, :]
 
     # Solve eigenvalue problem to compute phonon spectrum and eigenvectors
@@ -147,9 +150,10 @@ def get_phonon_modes(
 
     return PhononModes(w_s, X_acs, A_s)
 
-def calculate_random_displacements(masses: np.ndarray,
-                                   modes: PhononModes,
-                                   rng: Callable[int, np.ndarray]) -> PhononRattle:
+
+def calculate_random_displacements(
+    masses: np.ndarray, modes: PhononModes, rng: Callable[int, np.ndarray]
+) -> PhononRattle:
     """Use PhononModes data to compute a random set of displacements and velocities"""
 
     w_s, X_acs, A_s = modes
@@ -208,14 +212,16 @@ def n_BE(temp, omega):
         n = 1 / (np.exp(omega / (temp)) - 1)
     return n
 
+
 def _generate_sample_atoms(filename: Path) -> Atoms:
     import ase.build
+
     atoms = ase.build.bulk("Ag", cubic=True) * 2
     atoms.write(filename)
     return atoms
 
-def _generate_sample_fc(atoms: Atoms,
-                        filename: Path = Path("sample_fc.npy")):
+
+def _generate_sample_fc(atoms: Atoms, filename: Path = Path("sample_fc.npy")):
     phonons = Phonons(atoms, calc=EMT(), supercell=(1, 1, 1))
     phonons.clean()  # Remove pre-existing
     phonons.run()
@@ -224,11 +230,13 @@ def _generate_sample_fc(atoms: Atoms,
     np.save(filename, force_constants, allow_pickle=False)
     return force_constants
 
+
 def _get_atoms(structure: Path) -> Atoms:
     if structure.exists():
         return ase.io.read(structure)
 
     return _generate_sample_atoms(filename=structure)
+
 
 def _get_force_constants(atoms: Atoms, fc_file: Path) -> np.ndarray:
     if fc_file.exists():
@@ -237,13 +245,15 @@ def _get_force_constants(atoms: Atoms, fc_file: Path) -> np.ndarray:
     return _generate_sample_fc(atoms, filename=fc_file)
 
 
-def main(structure: Path = "sample.extxyz",
-         fc_file: Path = "sample_fc.npy",
-         temperature: float = 300.,
-         quantum: bool = True,
-         seed: int = 1,
-         frames: int = 10,
-         output_file: Path = "rattled.extxyz") -> None:
+def main(
+    structure: Path = "sample.extxyz",
+    fc_file: Path = "sample_fc.npy",
+    temperature: float = 300.0,
+    quantum: bool = True,
+    seed: int = 1,
+    frames: int = 10,
+    output_file: Path = "rattled.extxyz",
+) -> None:
     atoms = _get_atoms(structure)
     force_constants = _get_force_constants(atoms, fc_file)
     rng = np.random.default_rng(seed=seed)
@@ -254,17 +264,19 @@ def main(structure: Path = "sample.extxyz",
         temperature_K=temperature,
         quantum=quantum,
         failfast=True,
-        )
+    )
 
     if output_file.exists():
         remove(output_file)
 
     for _ in range(frames):
-        phonon_rattle = calculate_random_displacements(atoms.get_masses(), modes, rng=rng.random)
+        phonon_rattle = calculate_random_displacements(
+            atoms.get_masses(), modes, rng=rng.random
+        )
 
         out_atoms = get_rattled_atoms(atoms, rattle=phonon_rattle)
         out_atoms.write(output_file, append=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     typer.run(main)
