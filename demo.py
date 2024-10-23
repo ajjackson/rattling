@@ -2,7 +2,7 @@
 
 from os import remove
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Annotated, Callable, NamedTuple, Optional
 
 from asap3 import EMT
 from ase import Atoms
@@ -152,9 +152,24 @@ def get_phonon_modes(
 
 
 def calculate_random_displacements(
-    masses: np.ndarray, modes: PhononModes, rng: Callable[int, np.ndarray]
+    masses: np.ndarray,
+    modes: PhononModes,
+    rng: Callable[int, np.ndarray],
+    indices: int | slice | np.ndarray | None = None,
 ) -> PhononRattle:
-    """Use PhononModes data to compute a random set of displacements and velocities"""
+    """Use PhononModes data to compute a random set of displacements and velocities
+
+    For the mathematical formalism, see docstring of :fun:`get_phonon_modes`
+
+    Args:
+        masses: atomic masses corresponding to phonon modes
+        modes: frequency, eigenvector and nominal amplitude data
+        rng: random number generator accepting a target number N, and
+            generating a uniform distribution of N values in half-open interval
+            [0.0, 1.0)
+        indices: If provided, limit the set of included phonon modes.
+
+    """
 
     w_s, X_acs, A_s = modes
 
@@ -168,6 +183,12 @@ def calculate_random_displacements(
     # assign amplitudes and phases
     A_s = A_s * spread
     phi_s = 2.0 * np.pi * rng(len(w_s))
+
+    # Zero out amplitude of ignored modes
+    if indices is not None:
+        mask = np.zeros_like(A_s, dtype=bool)
+        mask[indices] = True
+        A_s[np.logical_not(mask)] = 0.0
 
     # Assign velocities and displacements
     v_ac = (w_s * A_s * np.cos(phi_s) * X_acs).sum(axis=2)
@@ -245,6 +266,19 @@ def _get_force_constants(atoms: Atoms, fc_file: Path) -> np.ndarray:
     return _generate_sample_fc(atoms, filename=fc_file)
 
 
+def _get_selection(indices: str, mode_index_range: tuple[int, int]) -> list[int]:
+    """Handle user input for mode selection"""
+
+    if not indices and mode_index_range is None:
+        return None
+    if indices and mode_index_range is not None:
+        raise ValueError("Only one of --indices or --slice may be provided")
+    if indices:
+        return np.array(indices.split(","), dtype=int)
+
+    return slice(mode_index_range[0], mode_index_range[1] + 1)
+
+
 def main(
     structure: Path = "sample.extxyz",
     fc_file: Path = "sample_fc.npy",
@@ -252,11 +286,20 @@ def main(
     quantum: bool = True,
     seed: int = 1,
     frames: int = 10,
+    indices: Annotated[
+        str,
+        typer.Option(
+            help="0-based indices of selected phonon modes, separated by commas (e.g. '0,1,2')"
+        ),
+    ] = "",
+    mode_index_range: Annotated[Optional[tuple[int, int]], typer.Option()] = None,
     output_file: Path = "rattled.extxyz",
 ) -> None:
     atoms = _get_atoms(structure)
     force_constants = _get_force_constants(atoms, fc_file)
     rng = np.random.default_rng(seed=seed)
+
+    selection = _get_selection(indices, mode_index_range)
 
     modes = get_phonon_modes(
         force_constants,
@@ -271,7 +314,7 @@ def main(
 
     for _ in range(frames):
         phonon_rattle = calculate_random_displacements(
-            atoms.get_masses(), modes, rng=rng.random
+            atoms.get_masses(), modes, rng=rng.random, indices=selection
         )
 
         out_atoms = get_rattled_atoms(atoms, rattle=phonon_rattle)
