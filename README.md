@@ -1,8 +1,8 @@
-selective-rattle
-----------------
+rattling
+--------
 
 This repository is intended to contain tools for producing
-"phonon-rattled" structures, that go further than functionality
+"phonon-rattled" atomistic structures, that go further than functionality
 included with the
 [Atomic Simulation Environment](https://wiki.fysik.dtu.dk/ase/index.html) (ASE) and
 [hiphive](https://wiki.fysik.dtu.dk/ase/index.html).
