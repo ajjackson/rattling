@@ -42,24 +42,24 @@ def get_phonon_modes(
 ) -> PhononModes:
     r"""Return phonon mode data at a given temperature
 
-    Parameters:
+    Args:
 
-    force_constants: array of size 3N x 3N
-        force constants (Hessian) of the system in eV/Å²
+        force_constants: array of size 3N x 3N
+            force constants (Hessian) of the system in eV/Å²
 
-    masses: array of length N
-        masses of the structure in amu
+        masses: array of length N
+            masses of the structure in amu
 
-    temperature_K: float
-        Temperature in Kelvin.
+        temperature_K: float
+            Temperature in Kelvin.
 
-    quantum: bool
-        True for Bose-Einstein distribution, False for Maxwell-Boltzmann
-        (classical limit)
+        quantum: bool
+            True for Bose-Einstein distribution, False for Maxwell-Boltzmann
+            (classical limit)
 
-    failfast: bool
-        True for sanity checking the phonon spectrum for negative
-        frequencies at Gamma
+        failfast: bool
+            True for sanity checking the phonon spectrum for negative
+            frequencies at Gamma
 
     Returns:
 

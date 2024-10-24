@@ -3,11 +3,10 @@
 from importlib.resources import files
 from os import remove
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Iterator, Optional
 
 from ase import Atoms
 import ase.io
-from ase.phonons import Phonons
 import ase.units
 import numpy as np
 import typer
@@ -21,15 +20,15 @@ from rattling import (
 
 
 def _get_selection(
-    indices: str,
-    mode_index_range: tuple[int, int] | None,
+    indices: np.ndarray | None,
+    mode_index_range: slice | None,
     frequency_range: tuple[float, float] | None,
     modes: PhononModes,
 ) -> slice | np.ndarray:
     """Handle user input for mode selection"""
     n_inputs = sum(
         (
-            bool(indices),
+            indices is not None,
             mode_index_range is not None,
             frequency_range is not None,
         )
@@ -38,12 +37,13 @@ def _get_selection(
         return None
     if n_inputs > 1:
         raise ValueError(
-            "Only one of --indices, --index-range or --frequency-range may be provided"
+            "Only one of --indices, --index-range or "
+            "--frequency-range may be provided"
         )
-    if indices:
-        return np.array(indices.split(","), dtype=int)
+    if indices is not None:
+        return indices
     if mode_index_range is not None:
-        return slice(mode_index_range[0], mode_index_range[1] + 1)
+        return mode_index_range
 
     # The remaining option is frequency range
     frequencies = modes.frequencies / ase.units.invcm
@@ -66,17 +66,58 @@ def _print_selection_info(
     print(selected_frequencies / ase.units.invcm)
 
 
+def random_rattle(
+    atoms: Atoms,
+    force_constants: np.ndarray,
+    temperature: float = 300.0,
+    quantum: bool = True,
+    seed: int = 1,
+    num_configs: int = 10,
+    indices: np.ndarray | None = None,
+    index_range: slice | None = None,
+    frequency_range: tuple[int, int] | None = None,
+) -> Iterator[Atoms]:
+    """High-level Python interface for mode-selective rattling
+
+    Users are encouraged to examine the source code and use the same core
+    functions for alternate workflows.
+
+    Yields:
+        A new phonon-rattled Atoms
+
+    """
+    rng = np.random.default_rng(seed=seed)
+
+    modes = get_phonon_modes(
+        force_constants,
+        atoms.get_masses(),
+        temperature_K=temperature,
+        quantum=quantum,
+        failfast=True,
+    )
+
+    selection = _get_selection(indices, index_range, frequency_range, modes)
+    _print_selection_info(modes, selection)
+
+    for _ in range(num_configs):
+        phonon_rattle = calculate_random_displacements(
+            atoms.get_masses(), modes, rng=rng.random, indices=selection
+        )
+        yield get_rattled_atoms(atoms, rattle=phonon_rattle)
+
+
 def main(
     structure: Path = files("rattling.data") / "sample.extxyz",
     fc_file: Path = files("rattling.data") / "sample_fc.npy",
     temperature: float = 300.0,
     quantum: bool = True,
     seed: int = 1,
-    frames: int = 10,
+    num_configs: int = 10,
     indices: Annotated[
         str,
         typer.Option(
-            help="0-based indices of selected phonon modes, separated by commas (e.g. '0,1,2')"
+            help=("0-based indices of selected phonon modes, "
+                  "separated by commas (e.g. '0,1,2')")
         ),
     ] = "",
     index_range: Annotated[
@@ -93,28 +134,31 @@ def main(
 ) -> None:
     atoms = ase.io.read(structure)
     force_constants = np.load(fc_file)
-    rng = np.random.default_rng(seed=seed)
 
-    modes = get_phonon_modes(
-        force_constants,
-        atoms.get_masses(),
-        temperature_K=temperature,
+    if indices:
+        indices = np.array(indices.split(","), dtype=int)
+    else:  # empty string -> None
+        indices = None
+
+    if index_range is not None:
+        index_range=slice(index_range[0], index_range[1] + 1)
+
+    rattled_iter = random_rattle(
+        atoms=atoms,
+        force_constants=force_constants,
+        temperature=temperature,
         quantum=quantum,
-        failfast=True,
+        seed=seed,
+        num_configs=num_configs,
+        indices=indices,
+        index_range=index_range,
+        frequency_range=frequency_range,
     )
-
-    selection = _get_selection(indices, index_range, frequency_range, modes)
-    _print_selection_info(modes, selection)
 
     if output_file.exists():
         remove(output_file)
 
-    for _ in range(frames):
-        phonon_rattle = calculate_random_displacements(
-            atoms.get_masses(), modes, rng=rng.random, indices=selection
-        )
-
-        out_atoms = get_rattled_atoms(atoms, rattle=phonon_rattle)
+    for out_atoms in rattled_iter:
         out_atoms.write(output_file, append=True)
 
 
