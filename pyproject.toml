@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools >= 61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rattling"
+authors = [{name = "Adam Jackson", email = "adam.jackson@stfc.ac.uk"}]
+requires-python = ">= 3.10"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+
+dependencies = ["ase >= 3.23.0", "typer"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ajjackson/rattling"
+Repository = "https://github.com/ajjackson/rattling.git"
+
+[tools.setuptools.dynamic]
+version = {attr = "rattling.__version__"}
+
+[tool.black]
+line-length = 79
+
+[project.scripts]
+rattling-demo = "rattling.cli.demo:app"

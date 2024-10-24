@@ -1,16 +1,13 @@
-"""Selective phonon-mode rattling"""
+"""Library for phonon-rattling of atomistic structures"""
 
-from os import remove
-from pathlib import Path
-from typing import Annotated, Callable, NamedTuple, Optional
+__version__ = "0.1"
 
-from asap3 import EMT
+
+from typing import Callable, NamedTuple
+
 from ase import Atoms
-import ase.io
-from ase.phonons import Phonons
 import ase.units
 import numpy as np
-import typer
 
 
 class PhononModes(NamedTuple):
@@ -144,7 +141,9 @@ def get_phonon_modes(
     # or high temperature (== classical) limit
     if quantum:
         hbar = ase.units._hbar * ase.units.J * ase.units.s
-        A_s = np.sqrt(hbar * (2 * n_BE(temperature_eV, hbar * w_s) + 1) / (2 * w_s))
+        A_s = np.sqrt(
+            hbar * (2 * n_BE(temperature_eV, hbar * w_s) + 1) / (2 * w_s)
+        )
     else:
         A_s = np.sqrt(temperature_eV) / w_s
 
@@ -157,7 +156,7 @@ def calculate_random_displacements(
     rng: Callable[int, np.ndarray],
     indices: int | slice | np.ndarray | None = None,
 ) -> PhononRattle:
-    """Use PhononModes data to compute a random set of displacements and velocities
+    """Use PhononModes to compute a random set of displacements and velocities
 
     For the mathematical formalism, see docstring of :fun:`get_phonon_modes`
 
@@ -232,131 +231,3 @@ def n_BE(temp, omega):
     else:
         n = 1 / (np.exp(omega / (temp)) - 1)
     return n
-
-
-def _generate_sample_atoms(filename: Path) -> Atoms:
-    import ase.build
-
-    atoms = ase.build.bulk("Ag", cubic=True) * 2
-    atoms.write(filename)
-    return atoms
-
-
-def _generate_sample_fc(atoms: Atoms, filename: Path = Path("sample_fc.npy")):
-    phonons = Phonons(atoms, calc=EMT(), supercell=(1, 1, 1))
-    phonons.clean()  # Remove pre-existing
-    phonons.run()
-    phonons.read()
-    force_constants = phonons.get_force_constant()[0]
-    np.save(filename, force_constants, allow_pickle=False)
-    return force_constants
-
-
-def _get_atoms(structure: Path) -> Atoms:
-    if structure.exists():
-        return ase.io.read(structure)
-
-    return _generate_sample_atoms(filename=structure)
-
-
-def _get_force_constants(atoms: Atoms, fc_file: Path) -> np.ndarray:
-    if fc_file.exists():
-        return np.load(fc_file)
-
-    return _generate_sample_fc(atoms, filename=fc_file)
-
-
-def _get_selection(
-    indices: str,
-    mode_index_range: tuple[int, int] | None,
-    frequency_range: tuple[float, float] | None,
-    modes: PhononModes,
-) -> slice | np.ndarray:
-    """Handle user input for mode selection"""
-    n_inputs = sum(
-        (bool(indices), mode_index_range is not None, frequency_range is not None)
-    )
-    if n_inputs == 0:
-        return None
-    if n_inputs > 1:
-        raise ValueError(
-            "Only one of --indices, --index-range or --frequency-range may be provided"
-        )
-    if indices:
-        return np.array(indices.split(","), dtype=int)
-    if mode_index_range is not None:
-        return slice(mode_index_range[0], mode_index_range[1] + 1)
-
-    # The remaining option is frequency range
-    frequencies = modes.frequencies / ase.units.invcm
-    mask = np.logical_and(
-        frequencies >= min(frequency_range),
-        frequencies < max(frequency_range),
-    )
-    return np.where(mask)
-
-
-def _print_selection_info(
-    modes: PhononModes, selection: np.ndarray | slice | None
-) -> None:
-    if selection is None:
-        return
-
-    selected_frequencies = modes.frequencies[selection]
-
-    print("Selected modes with frequencies (cm⁻¹):")
-    print(selected_frequencies / ase.units.invcm)
-
-
-def main(
-    structure: Path = "sample.extxyz",
-    fc_file: Path = "sample_fc.npy",
-    temperature: float = 300.0,
-    quantum: bool = True,
-    seed: int = 1,
-    frames: int = 10,
-    indices: Annotated[
-        str,
-        typer.Option(
-            help="0-based indices of selected phonon modes, separated by commas (e.g. '0,1,2')"
-        ),
-    ] = "",
-    index_range: Annotated[
-        Optional[tuple[int, int]],
-        typer.Option(help="0-based index range of selected phonon modes (inclusive)"),
-    ] = None,
-    frequency_range: Annotated[
-        Optional[tuple[float, float]],
-        typer.Option(help="Energy range in cm⁻¹ of selected phonon modes"),
-    ] = None,
-    output_file: Path = "rattled.extxyz",
-) -> None:
-    atoms = _get_atoms(structure)
-    force_constants = _get_force_constants(atoms, fc_file)
-    rng = np.random.default_rng(seed=seed)
-
-    modes = get_phonon_modes(
-        force_constants,
-        atoms.get_masses(),
-        temperature_K=temperature,
-        quantum=quantum,
-        failfast=True,
-    )
-
-    selection = _get_selection(indices, index_range, frequency_range, modes)
-    _print_selection_info(modes, selection)
-
-    if output_file.exists():
-        remove(output_file)
-
-    for _ in range(frames):
-        phonon_rattle = calculate_random_displacements(
-            atoms.get_masses(), modes, rng=rng.random, indices=selection
-        )
-
-        out_atoms = get_rattled_atoms(atoms, rattle=phonon_rattle)
-        out_atoms.write(output_file, append=True)
-
-
-if __name__ == "__main__":
-    typer.run(main)
