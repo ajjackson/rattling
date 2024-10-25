@@ -69,7 +69,7 @@ def _print_selection_info(
         )
 
 
-def random_rattle(
+def random_rattle_iter(
     atoms: Atoms,
     force_constants: np.ndarray,
     temperature: float = 300.0,
@@ -78,13 +78,31 @@ def random_rattle(
     num_configs: int = 10,
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
-    frequency_range: tuple[int, int] | None = None,
+    frequency_range: tuple[float, float] | None = None,
     verbose: bool = True,
 ) -> Iterator[Atoms]:
     """High-level Python interface for mode-selective rattling
 
     Users are encouraged to examine the source code and use the same core
     functions for alternate workflows.
+
+    Args:
+        atoms: Input structure
+        force_constants: 3Nx3N force constants in eV Å⁻² a.m.u.⁻¹
+        temperature: Rattling temperature in Kelvin
+        quantum: If true, use Bose-Einstein distibution (including zero-point
+            motions). Otherwise, use classical occupation.
+        seed: Seed for random number generator. This can be used to ensure or
+            avoid repeated results, as appropriate.
+        num_configs: Number of output structures.
+        indices: integer array of indices for included vibrational modes.
+            Only one of "indices", "index_range" and "frequency_range" may be
+            used. If none are used, all modes will be included.
+        index_range: A Python slice object selecting an index range
+        frequency_range: Two values in wavenumber (1/cm), selecting range of
+            included vibrational modes.
+        verbose:
+            Print additional information where relevant.
 
     Yields:
         A new phonon-rattled Atoms
@@ -109,3 +127,56 @@ def random_rattle(
             atoms.get_masses(), modes, rng=rng.random, indices=selection
         )
         yield get_rattled_atoms(atoms, rattle=phonon_rattle)
+
+
+def random_rattle(
+    atoms: Atoms,
+    force_constants: np.ndarray,
+    temperature: float = 300.0,
+    quantum: bool = True,
+    seed: int = 1,
+    num_configs: int = 10,
+    indices: np.ndarray | None = None,
+    index_range: slice | None = None,
+    frequency_range: tuple[float, float] | None = None,
+    verbose: bool = True,
+) -> list[Atoms]:
+    """High-level Python interface for mode-selective rattling
+
+    Users are encouraged to examine the source code and use the same core
+    functions for alternate workflows.
+
+    Args:
+        atoms: Input structure
+        force_constants: 3Nx3N force constants in eV Å⁻² a.m.u.⁻¹
+        temperature: Rattling temperature in Kelvin
+        quantum: If true, use Bose-Einstein distibution (including zero-point
+            motions). Otherwise, use classical occupation.
+        seed: Seed for random number generator. This can be used to ensure or
+            avoid repeated results, as appropriate.
+        num_configs: Number of output structures.
+        indices: integer array of indices for included vibrational modes.
+            Only one of "indices", "index_range" and "frequency_range" may be
+            used. If none are used, all modes will be included.
+        index_range: A Python slice object selecting an index range
+        frequency_range: Two values in wavenumber (1/cm), selecting range of
+            included vibrational modes.
+        verbose:
+            Print additional information where relevant.
+
+    Returns:
+        Series of new Atoms with displacements and velocities.
+
+    """
+    return list(random_rattle_iter(
+        atoms=atoms,
+        force_constants=force_constants,
+        temperature=temperature,
+        quantum=quantum,
+        seed=seed,
+        num_configs=num_configs,
+        indices=indices,
+        index_range=index_range,
+        frequency_range=frequency_range,
+        verbose=verbose
+    ))

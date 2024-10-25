@@ -10,7 +10,7 @@ import ase.units
 import numpy as np
 import typer
 
-from rattling.api import random_rattle
+from rattling.api import random_rattle_iter
 
 
 def main(
@@ -52,7 +52,7 @@ def main(
     if index_range is not None:
         index_range = slice(index_range[0], index_range[1] + 1)
 
-    rattled_iter = random_rattle(
+    rattled_iter = random_rattle_iter(
         atoms=atoms,
         force_constants=force_constants,
         temperature=temperature,

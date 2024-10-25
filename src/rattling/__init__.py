@@ -20,6 +20,20 @@ class PhononModes:
 
     Thermally-appropriate amplitudes are assigned; these have not yet been
     Gaussian-distributed or mass-weighted
+
+    Args:
+        frequencies:
+            Angular frequency in ASE-friendly units (Å √(amu/eV))
+        eigenvectors:
+            Normalised eigenvectors
+        amplitudes:
+            Precalculated mode amplitudes at some temperature / quantum
+            distribution
+
+    Properties:
+        energies:
+            (read-only) energies in eV
+
     """
 
     frequencies: np.ndarray
