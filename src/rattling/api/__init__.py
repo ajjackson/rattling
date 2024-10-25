@@ -42,10 +42,10 @@ def _get_selection(
         return mode_index_range
 
     # The remaining option is frequency range
-    frequencies = modes.frequencies / ase.units.invcm
+    wavenumbers = modes.energies / ase.units.invcm
     mask = np.logical_and(
-        frequencies >= min(frequency_range),
-        frequencies < max(frequency_range),
+        wavenumbers >= min(frequency_range),
+        wavenumbers < max(frequency_range),
     )
     return np.where(mask)
 
@@ -56,10 +56,17 @@ def _print_selection_info(
     if selection is None:
         return
 
-    selected_frequencies = modes.frequencies[selection]
+    selected_frequencies = modes.energies[selection]
 
-    print("Selected modes with frequencies (cm⁻¹):")
-    print(selected_frequencies / ase.units.invcm)
+    print("Selected modes with frequencies:")
+    print(" (cm⁻¹)    (meV)")
+    for energy in selected_frequencies:
+        print(
+            "{cm:8.3f} {mev:8.4f}".format(
+                cm=(energy / ase.units.invcm),
+                mev=(energy * 1000),
+            ),
+        )
 
 
 def random_rattle(

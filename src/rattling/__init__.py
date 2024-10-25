@@ -3,6 +3,7 @@
 __version__ = "0.1"
 
 
+from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
 from ase import Atoms
@@ -10,7 +11,8 @@ import ase.units
 import numpy as np
 
 
-class PhononModes(NamedTuple):
+@dataclass
+class PhononModes:
     """Collection of intermediate phonon data
 
     At this stage the force constants have been solved to a fixed set of
@@ -23,6 +25,10 @@ class PhononModes(NamedTuple):
     frequencies: np.ndarray
     eigenvectors: np.ndarray
     amplitudes: np.ndarray
+
+    @property
+    def energies(self) -> np.ndarray:
+        return self.frequencies * ase.units.s * ase.units._hbar * ase.units.J
 
 
 class PhononRattle(NamedTuple):
@@ -170,7 +176,7 @@ def calculate_random_displacements(
 
     """
 
-    w_s, X_acs, A_s = modes
+    w_s, X_acs, A_s = modes.frequencies, modes.eigenvectors, modes.amplitudes
 
     # compute the gaussian distribution for the amplitudes
     # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
