@@ -188,32 +188,45 @@ def random_rattle(
         verbose=verbose
     ))
 
-def random_rattle_parallel(atoms: Atoms,
-                           force_constants: np.ndarray,
-                           num_configs: int = 10,
-                           seed: int = 1,
-                           **kwargs):
+def random_rattle_parallel(
+    atoms: Atoms,
+    force_constants: np.ndarray,
+    temperature: float = 300.0,
+    quantum: bool = True,
+    seed: int = 1,
+    rng: np.random.Generator | None = None,
+    num_configs: int = 10,
+    indices: np.ndarray | None = None,
+    index_range: slice | None = None,
+    frequency_range: tuple[float, float] | None = None,
+    verbose: bool = True) -> list[Atoms]:
 
     from joblib import Parallel, delayed
     from itertools import chain
     from math import ceil
-    from os import cpu_count
 
-    batch_size = 500
-    n_batches = int(ceil(num_configs / batch_size))
-    n_jobs = min([n_batches, cpu_count()])
+    if rng is None:
+        rng = np.random.default_rng(seed=seed)
 
-    rng = np.random.default_rng(seed=seed)
-    rng_children = rng.spawn(n_batches)
+    modes = get_phonon_modes(
+        force_constants,
+        atoms.get_masses(),
+        temperature_K=temperature,
+        quantum=quantum,
+        failfast=True,
+    )
 
-    def f(rng: np.random.Generator) -> Iterator[Atoms]:
-        return random_rattle(atoms,
-                             force_constants,
-                             num_configs=batch_size,
-                             rng=rng,
-                             **kwargs)
+    selection = _get_selection(indices, index_range, frequency_range, modes)
+    if verbose:
+        _print_selection_info(modes, selection)
 
-    delayed_inner = (delayed(f)(rng_child) for rng_child in rng_children)
-    batched_rattle = Parallel(n_jobs=n_jobs)(delayed_inner)
+    def f() -> Atoms:
+        phonon_rattle = calculate_random_displacements(
+            atoms.get_masses(), modes, rng=rng.random, indices=selection
+        )
+        return get_rattled_atoms(atoms, rattle=phonon_rattle)
 
-    return list(chain(batched_rattle))[:num_configs]
+    delayed_inner = (delayed(f)() for _ in range(num_configs))
+    batched_rattle = Parallel(n_jobs=-1,
+                              return_as="generator_unordered")(delayed_inner)
+    return(list(batched_rattle))
