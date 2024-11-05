@@ -75,6 +75,7 @@ def random_rattle_iter(
     temperature: float = 300.0,
     quantum: bool = True,
     seed: int = 1,
+    rng: np.random.Generator | None = None,
     num_configs: int = 10,
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
@@ -94,6 +95,7 @@ def random_rattle_iter(
             motions). Otherwise, use classical occupation.
         seed: Seed for random number generator. This can be used to ensure or
             avoid repeated results, as appropriate.
+        rng: If provided, use this Generator instead of creating a new one with seed
         num_configs: Number of output structures.
         indices: integer array of indices for included vibrational modes.
             Only one of "indices", "index_range" and "frequency_range" may be
@@ -108,7 +110,8 @@ def random_rattle_iter(
         A new phonon-rattled Atoms
 
     """
-    rng = np.random.default_rng(seed=seed)
+    if rng is None:
+        rng = np.random.default_rng(seed=seed)
 
     modes = get_phonon_modes(
         force_constants,
@@ -135,6 +138,7 @@ def random_rattle(
     temperature: float = 300.0,
     quantum: bool = True,
     seed: int = 1,
+    rng: np.random.Generator | None = None,
     num_configs: int = 10,
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
@@ -154,6 +158,8 @@ def random_rattle(
             motions). Otherwise, use classical occupation.
         seed: Seed for random number generator. This can be used to ensure or
             avoid repeated results, as appropriate.
+        rng: If provided, use this Generator instead of creating a new one with
+            seed
         num_configs: Number of output structures.
         indices: integer array of indices for included vibrational modes.
             Only one of "indices", "index_range" and "frequency_range" may be
@@ -174,9 +180,40 @@ def random_rattle(
         temperature=temperature,
         quantum=quantum,
         seed=seed,
+        rng=rng,
         num_configs=num_configs,
         indices=indices,
         index_range=index_range,
         frequency_range=frequency_range,
         verbose=verbose
     ))
+
+def random_rattle_parallel(atoms: Atoms,
+                           force_constants: np.ndarray,
+                           num_configs: int = 10,
+                           seed: int = 1,
+                           **kwargs):
+
+    from joblib import Parallel, delayed
+    from itertools import chain
+    from math import ceil
+    from os import cpu_count
+
+    batch_size = 500
+    n_batches = int(ceil(num_configs / batch_size))
+    n_jobs = min([n_batches, cpu_count()])
+
+    rng = np.random.default_rng(seed=seed)
+    rng_children = rng.spawn(n_batches)
+
+    def f(rng: np.random.Generator) -> Iterator[Atoms]:
+        return random_rattle(atoms,
+                             force_constants,
+                             num_configs=batch_size,
+                             rng=rng,
+                             **kwargs)
+
+    delayed_inner = (delayed(f)(rng_child) for rng_child in rng_children)
+    batched_rattle = Parallel(n_jobs=n_jobs)(delayed_inner)
+
+    return list(chain(batched_rattle))[:num_configs]

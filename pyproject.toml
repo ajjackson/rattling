@@ -9,7 +9,7 @@ requires-python = ">= 3.10"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 
-dependencies = ["ase >= 3.23.0", "typer"]
+dependencies = ["ase >= 3.23.0", "typer", "joblib"]
 dynamic = ["version"]
 
 [project.urls]
