@@ -210,10 +210,10 @@ def calculate_random_displacements(
         A_s[np.logical_not(mask)] = 0.0
 
     # Assign velocities and displacements
-    v_ac = (w_s * A_s * np.cos(phi_s) * X_acs).sum(axis=2)
+    v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
     v_ac /= np.sqrt(masses)[:, None]
 
-    d_ac = (A_s * np.sin(phi_s) * X_acs).sum(axis=2)
+    d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
     d_ac /= np.sqrt(masses)[:, None]
 
     return PhononRattle(d_ac, v_ac)
