@@ -72,7 +72,6 @@ def _print_selection_info(
             ),
         )
 
-
 def random_rattle_iter(
     atoms: Atoms,
     force_constants: np.ndarray,
@@ -84,6 +83,7 @@ def random_rattle_iter(
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
     frequency_range: tuple[float, float] | None = None,
+    include_velocities: bool = True,
     verbose: bool = True,
 ) -> Iterator[Atoms]:
     """High-level Python interface for mode-selective rattling
@@ -107,6 +107,7 @@ def random_rattle_iter(
         index_range: A Python slice object selecting an index range
         frequency_range: Two values in wavenumber (1/cm), selecting range of
             included vibrational modes.
+        include_velocities: calculate velocities (otherwise set to 0)
         verbose:
             Print additional information where relevant.
 
@@ -131,10 +132,13 @@ def random_rattle_iter(
 
     for _ in range(num_configs):
         phonon_rattle = calculate_random_displacements(
-            atoms.get_masses(), modes, rng=rng.random, indices=selection
+            atoms.get_masses(),
+            modes,
+            rng=rng.random,
+            indices=selection,
+            include_velocities=include_velocities,
         )
         yield get_rattled_atoms(atoms, rattle=phonon_rattle)
-
 
 def _random_rattle_parallel_iter(
     atoms: Atoms,
@@ -147,6 +151,7 @@ def _random_rattle_parallel_iter(
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
     frequency_range: tuple[float, float] | None = None,
+    include_velocities: bool = True,
     verbose: bool = True) -> list[Atoms]:
     """High-level Python interface for mode-selective rattling
 
@@ -170,6 +175,7 @@ def _random_rattle_parallel_iter(
         index_range: A Python slice object selecting an index range
         frequency_range: Two values in wavenumber (1/cm), selecting range of
             included vibrational modes.
+        include_velocities: calculate velocities (otherwise set to 0)
         verbose:
             Print additional information where relevant.
 
@@ -195,15 +201,18 @@ def _random_rattle_parallel_iter(
 
     def f(rng: int) -> Atoms:
         phonon_rattle = calculate_random_displacements(
-            atoms.get_masses(), modes, rng=rng.random, indices=selection
+            atoms.get_masses(),
+            modes,
+            rng=rng.random,
+            indices=selection,
+            include_velocities=include_velocities,
         )
         return get_rattled_atoms(atoms, rattle=phonon_rattle)
 
     delayed_inner = (delayed(f)(rng=rng.spawn(1)[0]) for _ in range(num_configs))
-    batched_rattle = Parallel(n_jobs=-2,
+    batched_rattle = Parallel(n_jobs=-1,
                               return_as="generator_unordered")(delayed_inner)
     yield from batched_rattle
-
 
 
 def random_rattle(
@@ -217,6 +226,7 @@ def random_rattle(
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
     frequency_range: tuple[float, float] | None = None,
+    include_velocities: bool = True,
     verbose: bool = True,
 ) -> list[Atoms]:
     """High-level Python interface for mode-selective rattling
@@ -241,6 +251,7 @@ def random_rattle(
         index_range: A Python slice object selecting an index range
         frequency_range: Two values in wavenumber (1/cm), selecting range of
             included vibrational modes.
+        include_velocities: calculate velocities (otherwise set to 0)
         verbose:
             Print additional information where relevant.
 
@@ -259,9 +270,9 @@ def random_rattle(
         indices=indices,
         index_range=index_range,
         frequency_range=frequency_range,
+        include_velocities=include_velocities,
         verbose=verbose
     ))
-
 
 def random_rattle_parallel(
     atoms: Atoms,
@@ -274,6 +285,7 @@ def random_rattle_parallel(
     indices: np.ndarray | None = None,
     index_range: slice | None = None,
     frequency_range: tuple[float, float] | None = None,
+    include_velocities: bool = True,
     verbose: bool = True) -> list[Atoms]:
     """High-level Python interface for mode-selective rattling
 
@@ -302,6 +314,7 @@ def random_rattle_parallel(
         index_range: A Python slice object selecting an index range
         frequency_range: Two values in wavenumber (1/cm), selecting range of
             included vibrational modes.
+        include_velocities: calculate velocities (otherwise set to 0)
         verbose:
             Print additional information where relevant.
 
@@ -320,5 +333,6 @@ def random_rattle_parallel(
         indices=indices,
         index_range=index_range,
         frequency_range=frequency_range,
+        include_velocities=include_velocities,
         verbose=verbose        
     )))

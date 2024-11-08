@@ -175,6 +175,7 @@ def calculate_random_displacements(
     modes: PhononModes,
     rng: Callable[int, np.ndarray],
     indices: int | slice | np.ndarray | None = None,
+    include_velocities: bool = True,
 ) -> PhononRattle:
     """Use PhononModes to compute a random set of displacements and velocities
 
@@ -187,6 +188,7 @@ def calculate_random_displacements(
             generating a uniform distribution of N values in half-open interval
             [0.0, 1.0)
         indices: If provided, limit the set of included phonon modes.
+        include_velocities: calculate velocities (otherwise set to 0)
 
     """
 
@@ -210,11 +212,14 @@ def calculate_random_displacements(
         A_s[np.logical_not(mask)] = 0.0
 
     # Assign velocities and displacements
-    v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
-    v_ac /= np.sqrt(masses)[:, None]
-
     d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
     d_ac /= np.sqrt(masses)[:, None]
+
+    if include_velocities:
+        v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
+        v_ac /= np.sqrt(masses)[:, None]
+    else:
+        v_ac = np.zeros_like(d_ac)
 
     return PhononRattle(d_ac, v_ac)
 
