@@ -170,6 +170,56 @@ def get_phonon_modes(
     return PhononModes(w_s, X_acs, A_s)
 
 
+def _calculate_weighted_random_displacements(
+        masses: np.ndarray,
+        modes: PhononModes,
+        rng: Callable[int, np.ndarray],
+        weights: np.ndarray,
+        include_velocities: bool = True,
+) -> PhononRattle:
+    """Use PhononModes to compute a random set of displacements and velocities
+
+    For the mathematical formalism, see docstring of :fun:`get_phonon_modes`
+
+    Args:
+        masses: atomic masses corresponding to phonon modes
+        modes: frequency, eigenvector and nominal amplitude data
+        rng: random number generator accepting a target number N, and
+            generating a uniform distribution of N values in half-open interval
+            [0.0, 1.0)
+        weights: additional scale factor applied to mode amplitudes. Typically
+            this will range 0-1 and is used to window or mask out a subset of
+            modes.
+        include_velocities: calculate velocities (otherwise set to 0)
+
+    """
+    w_s, X_acs, A_s = modes.frequencies, modes.eigenvectors, modes.amplitudes
+
+    # compute the gaussian distribution for the amplitudes
+    # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
+    # to avoid (highly improbable) NaN.
+
+    # Box Muller [en.wikipedia.org/wiki/Box–Muller_transform]:
+    spread = np.sqrt(-2.0 * np.log(1.0 - rng(len(w_s))))
+
+    # assign amplitudes and phases
+    A_s = A_s * spread * weights
+    phi_s = 2.0 * np.pi * rng(len(w_s))
+
+
+    # Assign velocities and displacements
+    d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
+    d_ac /= np.sqrt(masses)[:, None]
+
+    if include_velocities:
+        v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
+        v_ac /= np.sqrt(masses)[:, None]
+    else:
+        v_ac = np.zeros_like(d_ac)
+
+    return PhononRattle(d_ac, v_ac)
+
+
 def calculate_random_displacements(
     masses: np.ndarray,
     modes: PhononModes,
@@ -192,36 +242,20 @@ def calculate_random_displacements(
 
     """
 
-    w_s, X_acs, A_s = modes.frequencies, modes.eigenvectors, modes.amplitudes
-
-    # compute the gaussian distribution for the amplitudes
-    # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
-    # to avoid (highly improbable) NaN.
-
-    # Box Muller [en.wikipedia.org/wiki/Box–Muller_transform]:
-    spread = np.sqrt(-2.0 * np.log(1.0 - rng(len(w_s))))
-
-    # assign amplitudes and phases
-    A_s = A_s * spread
-    phi_s = 2.0 * np.pi * rng(len(w_s))
-
     # Zero out amplitude of ignored modes
     if indices is not None:
-        mask = np.zeros_like(A_s, dtype=bool)
-        mask[indices] = True
-        A_s[np.logical_not(mask)] = 0.0
-
-    # Assign velocities and displacements
-    d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
-    d_ac /= np.sqrt(masses)[:, None]
-
-    if include_velocities:
-        v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
-        v_ac /= np.sqrt(masses)[:, None]
+        weights = np.zeros_like(modes.frequencies, dtype=float)
+        weights[indices] = 1.
     else:
-        v_ac = np.zeros_like(d_ac)
+        weights = np.ones_like(modes.frequencies)
 
-    return PhononRattle(d_ac, v_ac)
+    return _calculate_weighted_random_displacements(
+        masses=masses,
+        modes=modes,
+        rng=rng,
+        weights=weights,
+        include_velocities=include_velocities
+    )
 
 
 def get_rattled_atoms(atoms: Atoms, rattle: PhononRattle) -> Atoms:
