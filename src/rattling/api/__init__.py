@@ -215,6 +215,69 @@ def _random_rattle_parallel_iter(
     yield from batched_rattle
 
 
+def random_rattle_binned_gaussian(
+        atoms: Atoms,
+        force_constants: np.ndarray,
+        energy_bins: np.ndarray,
+        fwhm: float,
+        temperature: float = 300.0,
+        quantum: bool = True,
+        seed: int = 1,
+        rng: np.random.Generator | None = None,
+        num_configs: int = 10,
+        include_velocities: bool = True,
+        verbose: bool = True,
+) -> Iterator[list[Atoms]]:
+    """Rattle atoms over a series of energy bins
+
+    Args:
+        energy_bins: bin edges in eV
+        fwhm: full-width half-maximum of Gaussian broadening profile
+
+    """
+    from functools import partial
+    from rattling import calculate_binned_random_displacements
+    from scipy.stats import norm
+
+    if rng is None:
+        rng = np.random.default_rng(seed=seed)
+
+    modes = get_phonon_modes(
+        force_constants,
+        atoms.get_masses(),
+        temperature_K=temperature,
+        quantum=quantum,
+        failfast=True,
+    )
+
+    def _fwhm_to_std(width: float) -> float:
+        return width / np.sqrt(8 * np.log(2))
+
+    # TODO more robust energy bin handling
+    bin_centres = (energy_bins[1:] + energy_bins[:-1]) * 0.5
+    bin_width = energy_bins[1] - energy_bins[0]
+
+
+    def energy_distribution(energy, bin_centres) -> np.ndarray:
+        return norm.pdf(bin_centres, loc=energy, scale=_fwhm_to_std(fwhm)) * bin_width
+
+    disp_generator = calculate_binned_random_displacements(
+        masses=atoms.get_masses(),
+        modes=modes,
+        rng=rng.random,
+        bin_centres=bin_centres,
+        energy_distribution=energy_distribution,
+        num_configs=num_configs,
+        include_velocities=include_velocities
+    )
+
+    # Yield a list of atoms for each energy bin
+    from functools import partial
+    _get_rattled_atoms = partial(get_rattled_atoms, atoms)
+
+    for phonon_rattles in disp_generator:
+        yield list(map(_get_rattled_atoms, phonon_rattles))
+
 def random_rattle(
     atoms: Atoms,
     force_constants: np.ndarray,

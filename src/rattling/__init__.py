@@ -4,7 +4,7 @@ __version__ = "0.1"
 
 
 from dataclasses import dataclass
-from typing import Callable, NamedTuple
+from typing import Callable, Iterable, NamedTuple, Protocol
 
 from ase import Atoms
 import ase.units
@@ -170,6 +170,56 @@ def get_phonon_modes(
     return PhononModes(w_s, X_acs, A_s)
 
 
+def _calculate_weighted_random_displacements(
+        masses: np.ndarray,
+        modes: PhononModes,
+        rng: Callable[int, np.ndarray],
+        weights: np.ndarray,
+        include_velocities: bool = True,
+) -> PhononRattle:
+    """Use PhononModes to compute a random set of displacements and velocities
+
+    For the mathematical formalism, see docstring of :fun:`get_phonon_modes`
+
+    Args:
+        masses: atomic masses corresponding to phonon modes
+        modes: frequency, eigenvector and nominal amplitude data
+        rng: random number generator accepting a target number N, and
+            generating a uniform distribution of N values in half-open interval
+            [0.0, 1.0)
+        weights: additional scale factor applied to mode amplitudes. Typically
+            this will range 0-1 and is used to window or mask out a subset of
+            modes.
+        include_velocities: calculate velocities (otherwise set to 0)
+
+    """
+    w_s, X_acs, A_s = modes.frequencies, modes.eigenvectors, modes.amplitudes
+
+    # compute the gaussian distribution for the amplitudes
+    # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
+    # to avoid (highly improbable) NaN.
+
+    # Box Muller [en.wikipedia.org/wiki/Box–Muller_transform]:
+    spread = np.sqrt(-2.0 * np.log(1.0 - rng(len(w_s))))
+
+    # assign amplitudes and phases
+    A_s = A_s * spread * weights
+    phi_s = 2.0 * np.pi * rng(len(w_s))
+
+
+    # Assign velocities and displacements
+    d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
+    d_ac /= np.sqrt(masses)[:, None]
+
+    if include_velocities:
+        v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
+        v_ac /= np.sqrt(masses)[:, None]
+    else:
+        v_ac = np.zeros_like(d_ac)
+
+    return PhononRattle(d_ac, v_ac)
+
+
 def calculate_random_displacements(
     masses: np.ndarray,
     modes: PhononModes,
@@ -192,37 +242,73 @@ def calculate_random_displacements(
 
     """
 
-    w_s, X_acs, A_s = modes.frequencies, modes.eigenvectors, modes.amplitudes
-
-    # compute the gaussian distribution for the amplitudes
-    # We need 0 < P <= 1.0 and not 0 0 <= P < 1.0 for the logarithm
-    # to avoid (highly improbable) NaN.
-
-    # Box Muller [en.wikipedia.org/wiki/Box–Muller_transform]:
-    spread = np.sqrt(-2.0 * np.log(1.0 - rng(len(w_s))))
-
-    # assign amplitudes and phases
-    A_s = A_s * spread
-    phi_s = 2.0 * np.pi * rng(len(w_s))
-
     # Zero out amplitude of ignored modes
     if indices is not None:
-        mask = np.zeros_like(A_s, dtype=bool)
-        mask[indices] = True
-        A_s[np.logical_not(mask)] = 0.0
-
-    # Assign velocities and displacements
-    d_ac = np.einsum('k,ijk', A_s * np.sin(phi_s), X_acs)
-    d_ac /= np.sqrt(masses)[:, None]
-
-    if include_velocities:
-        v_ac = np.einsum('k,ijk', w_s * A_s * np.cos(phi_s), X_acs)
-        v_ac /= np.sqrt(masses)[:, None]
+        weights = np.zeros_like(modes.frequencies, dtype=float)
+        weights[indices] = 1.
     else:
-        v_ac = np.zeros_like(d_ac)
+        weights = np.ones_like(modes.frequencies)
 
-    return PhononRattle(d_ac, v_ac)
+    return _calculate_weighted_random_displacements(
+        masses=masses,
+        modes=modes,
+        rng=rng,
+        weights=weights,
+        include_velocities=include_velocities
+    )
 
+
+class EnergyDistribution(Protocol):
+    def __call__(self, energy: float, bin_centres: np.ndarray) -> np.ndarray:
+        """Get weights corresponding to bins for given mode energy"""
+        ...
+
+
+def _check_bin_widths(bins: np.ndarray) -> None:
+    """Raise ValueError if bin width is not constant"""
+    widths = np.diff(bins)
+    if not np.allclose(widths[0], widths):
+        raise ValueError("Energy bins must be evenly spaced")
+
+
+def calculate_binned_random_displacements(
+        masses: np.ndarray,
+        modes: PhononModes,
+        rng: Callable[int, np.ndarray],
+        bin_centres: np.ndarray,
+        energy_distribution: EnergyDistribution,
+        num_configs: int = 10,
+        include_velocities: bool = True,
+) -> Iterable[list[PhononRattle]]:
+    """Generate a series of displacement batches corresponding to energy bins
+
+    Args:
+        bin_centres: energy bin centres in eV
+        distribution_func:
+            Function assigning weights to bins for a given mode energy
+        num_configs:
+            Number of displacements produced on each iteration (i.e. per energy
+            bin)
+
+        For other arguments, see calculate_random_displacements    
+    """
+    _check_bin_widths(bin_centres)
+
+    mode_bin_weights = np.zeros((len(modes.energies), len(bin_centres)), dtype=float)
+
+    for energy, row in zip(modes.energies, mode_bin_weights):
+        row[:] = energy_distribution(energy, bin_centres)
+
+    for mode_weights in mode_bin_weights.T:
+        yield list(
+            _calculate_weighted_random_displacements(
+                masses=masses,
+                modes=modes,
+                rng=rng,
+                weights=mode_weights,
+                include_velocities=include_velocities)
+            for _ in range(num_configs))
+        
 
 def get_rattled_atoms(atoms: Atoms, rattle: PhononRattle) -> Atoms:
     """Get a new Atoms with displacements and velocities from PhononRattle"""
