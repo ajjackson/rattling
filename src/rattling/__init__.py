@@ -4,7 +4,7 @@ __version__ = "0.1"
 
 
 from dataclasses import dataclass
-from typing import Callable, NamedTuple
+from typing import Callable, Iterable, NamedTuple, Protocol
 
 from ase import Atoms
 import ase.units
@@ -257,6 +257,58 @@ def calculate_random_displacements(
         include_velocities=include_velocities
     )
 
+
+class EnergyDistribution(Protocol):
+    def __call__(self, energy: float, bin_centres: np.ndarray) -> np.ndarray:
+        """Get weights corresponding to bins for given mode energy"""
+        ...
+
+
+def _check_bin_widths(bins: np.ndarray) -> None:
+    """Raise ValueError if bin width is not constant"""
+    widths = np.diff(bins)
+    if not np.allclose(widths[0], widths):
+        raise ValueError("Energy bins must be evenly spaced")
+
+
+def calculate_binned_random_displacements(
+        masses: np.ndarray,
+        modes: PhononModes,
+        rng: Callable[int, np.ndarray],
+        bin_centres: np.ndarray,
+        energy_distribution: EnergyDistribution,
+        num_configs: int = 10,
+        include_velocities: bool = True,
+) -> Iterable[list[PhononRattle]]:
+    """Generate a series of displacement batches corresponding to energy bins
+
+    Args:
+        bin_centres: energy bin centres in eV
+        distribution_func:
+            Function assigning weights to bins for a given mode energy
+        num_configs:
+            Number of displacements produced on each iteration (i.e. per energy
+            bin)
+
+        For other arguments, see calculate_random_displacements    
+    """
+    _check_bin_widths(bin_centres)
+
+    mode_bin_weights = np.zeros((len(modes.energies), len(bin_centres)), dtype=float)
+
+    for energy, row in zip(modes.energies, mode_bin_weights):
+        row[:] = energy_distribution(energy, bin_centres)
+
+    for mode_weights in mode_bin_weights.T:
+        yield list(
+            _calculate_weighted_random_displacements(
+                masses=masses,
+                modes=modes,
+                rng=rng,
+                weights=mode_weights,
+                include_velocities=include_velocities)
+            for _ in range(num_configs))
+        
 
 def get_rattled_atoms(atoms: Atoms, rattle: PhononRattle) -> Atoms:
     """Get a new Atoms with displacements and velocities from PhononRattle"""
